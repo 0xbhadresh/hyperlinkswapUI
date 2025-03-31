@@ -8,7 +8,12 @@ import TokenInput from "@/components/token-input";
 import SlippageSelector from "@/components/slippage-selector";
 import SwapDetails from "@/components/swap-details";
 import type { Token, SwapInfo } from "@/lib/types";
-import { useAccount } from "wagmi";
+import {
+  useAccount,
+  useChains,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from "wagmi";
 import {
   getSwapInfo,
   formatTokenAmount,
@@ -16,41 +21,112 @@ import {
   NATIVE_TOKEN_ADDRESS,
 } from "@/services/swap-service";
 import { useToast } from "@/components/ui/use-toast";
+import { parseUnits } from "viem";
+
+interface ApiToken {
+  chainId: number;
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoURI: string;
+  isWhitelisted: boolean;
+  isStable: boolean;
+}
 
 export default function TokenSwap() {
   const { address, isConnected } = useAccount();
+  const chains = useChains();
+  const chain = chains[0];
   const { toast } = useToast();
-  const [fromToken, setFromToken] = useState<Token>({
-    symbol: "ETH",
-    name: "Ethereum",
-    icon: "/ethereum.svg",
-    balance: "1.783918",
-    value: "3178",
-    address: NATIVE_TOKEN_ADDRESS,
-    decimals: 18,
-  });
+  const { writeContract, data: hash } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } =
+    useWaitForTransactionReceipt({
+      hash,
+    });
 
-  const [toToken, setToToken] = useState<Token>({
-    symbol: "USDC",
-    name: "USD Coin",
-    icon: "/usdc.svg",
-    balance: "0",
-    value: "0",
-    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    decimals: 6,
-  });
-
-  const [fromAmount, setFromAmount] = useState("1.783918");
+  const [fromToken, setFromToken] = useState<Token | null>(null);
+  const [toToken, setToToken] = useState<Token | null>(null);
+  const [fromAmount, setFromAmount] = useState("1");
   const [toAmount, setToAmount] = useState("");
   const [slippage, setSlippage] = useState("0.5");
   const [swapInfo, setSwapInfo] = useState<SwapInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const [selectedChain, setSelectedChain] = useState("ethereum");
+  const [isPending, setIsPending] = useState(false);
+
+  // Fetch initial tokens
+  useEffect(() => {
+    const fetchInitialTokens = async () => {
+      try {
+        const chainId = chain?.id === 1 ? 1 : 56;
+
+        // Create native token based on chain
+        const nativeToken: Token =
+          chain?.id === 1
+            ? {
+                symbol: "ETH",
+                name: "Ethereum",
+                icon: "/ethereum.svg",
+                balance: "0",
+                value: "0",
+                address: NATIVE_TOKEN_ADDRESS,
+                decimals: 18,
+              }
+            : {
+                symbol: "BNB",
+                name: "Binance Coin",
+                icon: "/bnb.svg",
+                balance: "0",
+                value: "0",
+                address: NATIVE_TOKEN_ADDRESS,
+                decimals: 18,
+              };
+
+        // Fetch tokens from API
+        const response = await fetch(
+          `https://ks-setting.kyberswap.com/api/v1/tokens?page=1&pageSize=100&isWhitelisted=true&chainIds=${chainId}`
+        );
+        const data = await response.json();
+
+        // Find USDC or USDT as default quote token
+        const stablecoin = data.data.tokens.find(
+          (token: ApiToken) =>
+            token.symbol === "USDC" || token.symbol === "USDT"
+        );
+
+        if (stablecoin) {
+          const quoteToken: Token = {
+            symbol: stablecoin.symbol,
+            name: stablecoin.name,
+            icon: stablecoin.logoURI,
+            balance: "0",
+            value: "0",
+            address: stablecoin.address,
+            decimals: stablecoin.decimals,
+          };
+
+          setFromToken(nativeToken);
+          setToToken(quoteToken);
+        }
+      } catch (error) {
+        console.error("Error fetching initial tokens:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load initial tokens. Please try again.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    fetchInitialTokens();
+  }, [chain, toast]);
 
   useEffect(() => {
-    // Fetch swap info when input amount or tokens change
+    // Only fetch swap info when we have both tokens
+    if (!fromToken || !toToken) return;
+
     const fetchSwapInfo = async () => {
       if (
         !fromToken.address ||
@@ -67,25 +143,23 @@ export default function TokenSwap() {
         setIsLoading(true);
         setError(null);
 
-        // Convert input amount to token units (wei)
-        const amountInWei = toTokenUnits(fromAmount, fromToken.decimals || 18);
+        const amountInWei = toTokenUnits(fromAmount, fromToken.decimals);
 
         const params = {
           tokenIn: fromToken.address,
           tokenOut: toToken.address,
           amountIn: amountInWei,
-          slippageTolerance: (Number(slippage) * 10).toString(), // Convert to BIPs (0.5% -> 50 BIPs)
-          to: "0x0000000000000000000000000000000000000000", // Replace with actual user address when connected
+          slippageTolerance: (Number(slippage) * 10).toString(),
+          to: address || "0x0000000000000000000000000000000000000000",
         };
 
         const data = await getSwapInfo(selectedChain, params);
         setSwapInfo(data);
 
-        // Format the output amount based on token decimals
         if (data.outputAmount) {
           const formattedAmount = formatTokenAmount(
             data.outputAmount,
-            toToken.decimals || 6
+            toToken.decimals
           );
           setToAmount(formattedAmount);
         }
@@ -102,13 +176,12 @@ export default function TokenSwap() {
       }
     };
 
-    // Debounce the API call to avoid too many requests
     const timer = setTimeout(() => {
       fetchSwapInfo();
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [fromToken, toToken, fromAmount, slippage, selectedChain, toast]);
+  }, [fromToken, toToken, fromAmount, slippage, selectedChain, address, toast]);
 
   const handleSwapPositions = () => {
     // Swap token positions
@@ -134,14 +207,93 @@ export default function TokenSwap() {
     setToToken(token);
   };
 
-  const handleSwap = () => {
-    // Here you would implement the actual swap execution
-    // using the encodedSwapData from swapInfo
-    toast({
-      title: "Swap initiated",
-      description: `Swapping ${fromAmount} ${fromToken.symbol} to ${toAmount} ${toToken.symbol}`,
-    });
+  const handleSwap = async () => {
+    if (!swapInfo || !fromToken || !toToken || !isConnected) return;
+
+    try {
+      setIsPending(true);
+      setError(null);
+
+      // Prepare approval if needed (for non-native tokens)
+      if (fromToken.address !== NATIVE_TOKEN_ADDRESS) {
+        const tokenAbi = [
+          {
+            inputs: [
+              { name: "spender", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+            name: "approve",
+            outputs: [{ name: "", type: "bool" }],
+            stateMutability: "nonpayable",
+            type: "function",
+          },
+        ];
+
+        // Approve router to spend tokens
+        await writeContract({
+          address: fromToken.address as `0x${string}`,
+          abi: tokenAbi,
+          functionName: "approve",
+          args: [
+            swapInfo.routerAddress as `0x${string}`,
+            parseUnits(fromAmount, fromToken.decimals),
+          ],
+        });
+      }
+
+      // Execute swap
+      const routerAbi = [
+        {
+          inputs: [{ name: "rawData", type: "bytes" }],
+          name: "swap",
+          outputs: [],
+          stateMutability: "payable",
+          type: "function",
+        },
+      ];
+
+      const value =
+        fromToken.address === NATIVE_TOKEN_ADDRESS
+          ? parseUnits(fromAmount, 18)
+          : 0n;
+
+      await writeContract({
+        address: swapInfo.routerAddress as `0x${string}`,
+        abi: routerAbi,
+        functionName: "swap",
+        args: [swapInfo.encodedSwapData as `0x${string}`],
+        value,
+      });
+
+      toast({
+        title: "Swap initiated",
+        description: `Swapping ${fromAmount} ${fromToken.symbol} to ${toAmount} ${toToken.symbol}`,
+      });
+    } catch (err) {
+      console.error("Swap error:", err);
+      setError(
+        "Failed to execute swap. Please ensure you have enough balance and try again."
+      );
+      toast({
+        title: "Error",
+        description:
+          "Failed to execute swap. Please ensure you have enough balance and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPending(false);
+    }
   };
+
+  if (!fromToken || !toToken) {
+    return (
+      <Card className="bg-zinc-900 border-zinc-800 text-white shadow-xl">
+        <CardContent className="p-4 flex justify-center items-center">
+          <Loader2 className="h-8 w-8 animate-spin" />
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="bg-zinc-900 border-zinc-800 text-white shadow-xl">
@@ -200,7 +352,7 @@ export default function TokenSwap() {
           <SwapDetails
             rate={`1 ${fromToken.symbol} = ${formatTokenAmount(
               swapInfo.outputAmount,
-              toToken.decimals || 6
+              toToken.decimals
             )} ${toToken.symbol}`}
             minimumReceived={`${formatTokenAmount(
               (
@@ -208,7 +360,7 @@ export default function TokenSwap() {
                   BigInt(1000 - Number(slippage) * 10)) /
                 BigInt(1000)
               ).toString(),
-              toToken.decimals || 6
+              toToken.decimals
             )} ${toToken.symbol}`}
             priceImpact={
               swapInfo.amountOutUsd > 0
@@ -230,13 +382,28 @@ export default function TokenSwap() {
           className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-6"
           onClick={handleSwap}
           disabled={
-            isLoading || !swapInfo || !fromAmount || Number(fromAmount) <= 0
+            isLoading ||
+            isPending ||
+            isConfirming ||
+            !swapInfo ||
+            !fromAmount ||
+            Number(fromAmount) <= 0
           }
         >
           {isLoading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading...
+              Loading quote...
+            </>
+          ) : isPending ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Waiting for approval...
+            </>
+          ) : isConfirming ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Confirming transaction...
             </>
           ) : !isConnected ? (
             "Connect Wallet"
