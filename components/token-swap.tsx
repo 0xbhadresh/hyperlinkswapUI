@@ -255,7 +255,7 @@ export default function TokenSwap() {
       const value =
         fromToken.address === NATIVE_TOKEN_ADDRESS
           ? parseUnits(fromAmount, 18)
-          : 0n;
+          : BigInt(0);
 
       await writeContract({
         address: swapInfo.routerAddress as `0x${string}`,
