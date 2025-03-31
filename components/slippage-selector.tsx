@@ -1,15 +1,28 @@
-"use client"
+"use client";
 
-import { Button } from "@/components/ui/button"
-import { ChevronUp } from "lucide-react"
+import { Button } from "@/components/ui/button";
+import { ChevronUp } from "lucide-react";
 
 interface SlippageSelectorProps {
-  slippage: string
-  onSlippageChange: (slippage: string) => void
+  slippage: string;
+  onSlippageChange: (slippage: string) => void;
 }
 
-export default function SlippageSelector({ slippage, onSlippageChange }: SlippageSelectorProps) {
-  const options = ["0.05", "0.1", "0.5", "1", "Custom"]
+export default function SlippageSelector({
+  slippage,
+  onSlippageChange,
+}: SlippageSelectorProps) {
+  // Only use whole numbers for simplicity
+  const options = ["1.0", "2.0", "3.0"];
+
+  const handleSlippageChange = (value: string) => {
+    // Parse and format the number to ensure consistency
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue) && numValue > 0 && numValue <= 100) {
+      // Format to one decimal place
+      onSlippageChange(numValue.toFixed(1));
+    }
+  };
 
   return (
     <div className="space-y-2">
@@ -34,14 +47,12 @@ export default function SlippageSelector({ slippage, onSlippageChange }: Slippag
                 ? "bg-zinc-700 text-white border border-emerald-600"
                 : "text-zinc-400 hover:text-white"
             }`}
-            onClick={() => onSlippageChange(option)}
+            onClick={() => handleSlippageChange(option)}
           >
-            {option}
-            {option !== "Custom" && "%"}
+            {option}%
           </Button>
         ))}
       </div>
     </div>
-  )
+  );
 }
-

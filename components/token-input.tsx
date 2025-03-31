@@ -1,21 +1,22 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { useState } from "react"
-import { ChevronDown, Copy, Info, Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import type { Token } from "@/lib/types"
-import TokenSelector from "@/components/token-selector"
+import { useState } from "react";
+import { ChevronDown, Copy, Info, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import type { Token } from "@/lib/types";
+import TokenSelector from "@/components/token-selector";
 
 interface TokenInputProps {
-  label: string
-  token: Token
-  amount?: string
-  onAmountChange: (value: string) => void
-  onTokenSelect: (token: Token) => void
-  isOutput?: boolean
-  isLoading?: boolean
+  label: string;
+  token: Token;
+  amount?: string;
+  onAmountChange: (value: string) => void;
+  onTokenSelect: (token: Token) => void;
+  isOutput?: boolean;
+  isLoading?: boolean;
+  usdValue?: string;
 }
 
 export default function TokenInput({
@@ -26,16 +27,17 @@ export default function TokenInput({
   onTokenSelect,
   isOutput = false,
   isLoading = false,
+  usdValue,
 }: TokenInputProps) {
-  const [showTokenSelector, setShowTokenSelector] = useState(false)
+  const [showTokenSelector, setShowTokenSelector] = useState(false);
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     // Only allow numbers and a single decimal point
-    const value = e.target.value
+    const value = e.target.value;
     if (value === "" || /^[0-9]*\.?[0-9]*$/.test(value)) {
-      onAmountChange(value)
+      onAmountChange(value);
     }
-  }
+  };
 
   return (
     <div className="space-y-2">
@@ -43,7 +45,11 @@ export default function TokenInput({
         <span className="text-sm text-zinc-400">{label}</span>
         {!isOutput && (
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-zinc-400 hover:text-white">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-zinc-400 hover:text-white"
+            >
               <Copy className="h-3 w-3 mr-1" />
               <span>0</span>
             </Button>
@@ -92,13 +98,16 @@ export default function TokenInput({
       {showTokenSelector && (
         <TokenSelector
           onSelect={(token) => {
-            onTokenSelect(token)
-            setShowTokenSelector(false)
+            onTokenSelect(token);
+            setShowTokenSelector(false);
           }}
           onClose={() => setShowTokenSelector(false)}
         />
       )}
-    </div>
-  )
-}
 
+      {usdValue && (
+        <div className="text-right text-sm text-zinc-400">≈ ${usdValue}</div>
+      )}
+    </div>
+  );
+}

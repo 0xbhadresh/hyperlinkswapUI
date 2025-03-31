@@ -13,6 +13,7 @@ import {
   useChains,
   useWriteContract,
   useWaitForTransactionReceipt,
+  useBalance,
 } from "wagmi";
 import {
   getSwapInfo,
@@ -21,7 +22,7 @@ import {
   NATIVE_TOKEN_ADDRESS,
 } from "@/services/swap-service";
 import { useToast } from "@/components/ui/use-toast";
-import { parseUnits } from "viem";
+import { parseUnits, formatUnits } from "viem";
 
 interface ApiToken {
   chainId: number;
@@ -33,6 +34,23 @@ interface ApiToken {
   isWhitelisted: boolean;
   isStable: boolean;
 }
+
+const calculateMinimumReceived = (
+  outputAmount: string,
+  slippageStr: string
+) => {
+  // Convert slippage from string to number (e.g., "0.5" -> 0.5)
+  const slippagePercent = Number(slippageStr);
+
+  // Convert to integer math to avoid floating point issues
+  const outputAmountBigInt = BigInt(outputAmount);
+  const slippageMultiplier = BigInt(Math.floor((100 - slippagePercent) * 1000));
+
+  return (
+    (outputAmountBigInt * slippageMultiplier) /
+    BigInt(100000)
+  ).toString();
+};
 
 export default function TokenSwap() {
   const { address, isConnected } = useAccount();
@@ -49,7 +67,7 @@ export default function TokenSwap() {
   const [toToken, setToToken] = useState<Token | null>(null);
   const [fromAmount, setFromAmount] = useState("1");
   const [toAmount, setToAmount] = useState("");
-  const [slippage, setSlippage] = useState("0.5");
+  const [slippage, setSlippage] = useState("1.0");
   const [swapInfo, setSwapInfo] = useState<SwapInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,8 +225,41 @@ export default function TokenSwap() {
     setToToken(token);
   };
 
+  // Add balance query
+  const { data: tokenBalance } = useBalance({
+    address: address as `0x${string}`,
+    token:
+      fromToken?.address === NATIVE_TOKEN_ADDRESS
+        ? undefined
+        : (fromToken?.address as `0x${string}`),
+  });
+
+  // Add balance check helper function
+  const hasInsufficientBalance = () => {
+    if (!fromToken || !fromAmount || !tokenBalance) return true;
+
+    try {
+      const amountBigInt = parseUnits(fromAmount, fromToken.decimals);
+      return amountBigInt > tokenBalance.value;
+    } catch (error) {
+      console.error("Error checking balance:", error);
+      return true;
+    }
+  };
+
   const handleSwap = async () => {
     if (!swapInfo || !fromToken || !toToken || !isConnected) return;
+
+    // Check balance before proceeding
+    if (hasInsufficientBalance()) {
+      setError(`Insufficient ${fromToken.symbol} balance`);
+      toast({
+        title: "Insufficient Balance",
+        description: `You don't have enough ${fromToken.symbol} to complete this swap`,
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       setIsPending(true);
@@ -285,6 +336,26 @@ export default function TokenSwap() {
     }
   };
 
+  // Calculate USD values
+  const calculateUsdValue = (
+    amount: string,
+    token: Token | null,
+    swapInfo: SwapInfo | null
+  ) => {
+    if (!amount || !token || !swapInfo || !swapInfo.tokens[token.address]) {
+      return "0.00";
+    }
+
+    try {
+      const tokenPrice = swapInfo.tokens[token.address].price;
+      const value = Number(amount) * tokenPrice;
+      return value.toFixed(2);
+    } catch (error) {
+      console.error("Error calculating USD value:", error);
+      return "0.00";
+    }
+  };
+
   if (!fromToken || !toToken) {
     return (
       <Card className="bg-zinc-900 border-zinc-800 text-white shadow-xl">
@@ -305,6 +376,7 @@ export default function TokenSwap() {
             amount={fromAmount}
             onAmountChange={handleFromAmountChange}
             onTokenSelect={handleFromTokenSelect}
+            usdValue={calculateUsdValue(fromAmount, fromToken, swapInfo)}
           />
         </div>
 
@@ -338,6 +410,7 @@ export default function TokenSwap() {
             onTokenSelect={handleToTokenSelect}
             isOutput
             isLoading={isLoading}
+            usdValue={calculateUsdValue(toAmount, toToken, swapInfo)}
           />
         </div>
 
@@ -355,11 +428,7 @@ export default function TokenSwap() {
               toToken.decimals
             )} ${toToken.symbol}`}
             minimumReceived={`${formatTokenAmount(
-              (
-                (BigInt(swapInfo.outputAmount) *
-                  BigInt(1000 - Number(slippage) * 10)) /
-                BigInt(1000)
-              ).toString(),
+              calculateMinimumReceived(swapInfo.outputAmount, slippage),
               toToken.decimals
             )} ${toToken.symbol}`}
             priceImpact={
@@ -387,7 +456,8 @@ export default function TokenSwap() {
             isConfirming ||
             !swapInfo ||
             !fromAmount ||
-            Number(fromAmount) <= 0
+            Number(fromAmount) <= 0 ||
+            hasInsufficientBalance()
           }
         >
           {isLoading ? (
@@ -407,6 +477,8 @@ export default function TokenSwap() {
             </>
           ) : !isConnected ? (
             "Connect Wallet"
+          ) : hasInsufficientBalance() ? (
+            `Insufficient ${fromToken.symbol} Balance`
           ) : !swapInfo ? (
             "Enter an amount"
           ) : (

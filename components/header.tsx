@@ -17,7 +17,7 @@ export default function Header() {
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <div className="flex items-center">
           <Link href="/" className="text-xl font-bold text-white mr-8">
-            SwapDEX
+            Hyperlink Practical
           </Link>
 
           {/* Desktop Navigation */}
